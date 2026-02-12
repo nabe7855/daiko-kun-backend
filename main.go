@@ -42,6 +42,7 @@ func main() {
 		admin.POST("/drivers", handlers.CreateDriver)
 		admin.GET("/drivers", handlers.ListDrivers)
 		admin.GET("/ride-requests", handlers.ListAllRideRequests)
+		admin.GET("/drivers/:id/history", handlers.ListDriverHistory)
 	}
 
 	// Driver Routes
@@ -59,12 +60,21 @@ func main() {
 	// Customer Routes
 	customer := r.Group("/customer")
 	{
+		customer.POST("/request-otp", handlers.RequestOTP)
+		customer.POST("/verify-otp", handlers.VerifyOTP)
+		customer.POST("/login", handlers.CustomerLogin) // Deprecated
 		customer.POST("/ride-requests", handlers.CreateRideRequest)
 		customer.POST("/ride-requests/:id/rate", handlers.SubmitRating)
 	}
 
-	// Additional Admin helper
-	admin.GET("/drivers/:id/history", handlers.ListDriverHistory)
+	// Message & Emergency Routes (Shared)
+	r.GET("/ride-requests/:id/messages", handlers.ListMessages)
+	r.POST("/ride-requests/:id/messages", handlers.SendMessage)
+	r.POST("/ride-requests/:id/emergency", handlers.CreateEmergencyReport)
+	r.POST("/ride-requests/:id/upload", handlers.UploadMessageImage)
+
+	// Static files for image uploads
+	r.Static("/uploads", "./uploads")
 
 	r.Run() // listen and serve on 0.0.0.0:8080
 }
