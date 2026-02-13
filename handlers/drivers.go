@@ -40,8 +40,8 @@ func CreateDriver(c *gin.Context) {
 	}
 
 	sqlStatement := `
-		INSERT INTO drivers (id, name, phone_number, license_number, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO drivers (id, name, phone_number, license_number, company_id, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
 	`
 	
@@ -50,6 +50,7 @@ func CreateDriver(c *gin.Context) {
 		driver.Name, 
 		driver.PhoneNumber, 
 		driver.LicenseNumber, 
+		driver.CompanyID,
 		driver.Status, 
 		driver.CreatedAt, 
 		driver.UpdatedAt,
@@ -70,7 +71,17 @@ func ListDrivers(c *gin.Context) {
 		return
 	}
 
-	rows, err := db.DB.Query("SELECT id, name, phone_number, license_number, status, created_at, updated_at FROM drivers ORDER BY created_at DESC")
+	companyID := c.Query("company_id")
+
+	query := "SELECT id, name, phone_number, license_number, company_id, status, average_rating, rating_count, created_at, updated_at FROM drivers"
+	args := []interface{}{}
+	if companyID != "" {
+		query += " WHERE company_id = $1"
+		args = append(args, companyID)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := db.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch drivers: " + err.Error()})
 		return
@@ -80,7 +91,7 @@ func ListDrivers(c *gin.Context) {
 	var drivers []models.Driver
 	for rows.Next() {
 		var d models.Driver
-		err := rows.Scan(&d.ID, &d.Name, &d.PhoneNumber, &d.LicenseNumber, &d.Status, &d.CreatedAt, &d.UpdatedAt)
+		err := rows.Scan(&d.ID, &d.Name, &d.PhoneNumber, &d.LicenseNumber, &d.CompanyID, &d.Status, &d.AverageRating, &d.RatingCount, &d.CreatedAt, &d.UpdatedAt)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan driver: " + err.Error()})
 			return
@@ -178,4 +189,59 @@ func UpdateDriverLocation(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Location updated successfully"})
+}
+
+// GetDriver handles GET /driver/drivers/:id
+func GetDriver(c *gin.Context) {
+	id := c.Param("id")
+
+	if db.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection not initialized"})
+		return
+	}
+
+	var d models.Driver
+	err := db.DB.QueryRow("SELECT id, name, phone_number, license_number, status, average_rating, rating_count, created_at, updated_at FROM drivers WHERE id = $1", id).
+		Scan(&d.ID, &d.Name, &d.PhoneNumber, &d.LicenseNumber, &d.Status, &d.AverageRating, &d.RatingCount, &d.CreatedAt, &d.UpdatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Driver not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, d)
+}
+
+// UpdateDriverFCMToken handles PATCH /driver/fcm-token
+func UpdateDriverFCMToken(c *gin.Context) {
+	var req struct {
+		ID       string `json:"id" binding:"required"`
+		FCMToken string `json:"fcm_token" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	_, err := db.DB.Exec("UPDATE drivers SET fcm_token = $1, updated_at = $2 WHERE id = $3", req.FCMToken, time.Now(), req.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update FCM token: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "FCM token updated successfully"})
+}
+
+// DeleteDriverAccount handles DELETE /driver/:id
+func DeleteDriverAccount(c *gin.Context) {
+	id := c.Param("id")
+
+	_, err := db.DB.Exec("DELETE FROM drivers WHERE id = $1", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete account: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully"})
 }

@@ -19,6 +19,7 @@ type RideRequest struct {
 	RatingToDriver     *int      `json:"rating_to_driver"`
 	RatingToCustomer   *int      `json:"rating_to_customer"`
 	ReviewComment      *string   `json:"review_comment"`
+	ScheduledAt        *time.Time `json:"scheduled_at,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
 	
@@ -28,4 +29,6 @@ type RideRequest struct {
 	LicenseNumber    *string  `json:"license_number,omitempty"`
 	DriverCurrentLat *float64 `json:"driver_current_lat,omitempty"`
 	DriverCurrentLng *float64 `json:"driver_current_lng,omitempty"`
+	DriverAverageRating *float64 `json:"driver_average_rating,omitempty"`
+	DriverRatingCount   *int     `json:"driver_rating_count,omitempty"`
 }

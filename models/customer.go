@@ -12,6 +12,7 @@ type Customer struct {
 	SocialID       *string   `json:"social_id"`
 	SocialProvider *string   `json:"social_provider"`
 	Status         string    `json:"status"`
+	FCMToken       *string   `json:"fcm_token"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

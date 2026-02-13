@@ -39,6 +39,25 @@ func main() {
 	// Admin Routes
 	admin := r.Group("/admin")
 	{
+		admin.POST("/login", handlers.AdminLogin)
+
+		// Platform Management (Super Admin)
+		platform := admin.Group("/platform")
+		{
+			platform.GET("/stats", handlers.GetPlatformStats)
+			platform.GET("/companies", handlers.ListCompanies)
+			platform.POST("/companies", handlers.CreateCompany)
+			platform.PATCH("/companies/:id/status", handlers.UpdateCompanyStatus)
+			platform.GET("/settlements", handlers.GetSettlements)
+			platform.GET("/settlements/export", handlers.ExportSettlementsCSV)
+		}
+
+		// Company Management (Individual Companies)
+		company := admin.Group("/company")
+		{
+			company.GET("/stats", handlers.GetCompanyStats)
+		}
+
 		admin.POST("/drivers", handlers.CreateDriver)
 		admin.GET("/drivers", handlers.ListDrivers)
 		admin.GET("/ride-requests", handlers.ListAllRideRequests)
@@ -49,12 +68,17 @@ func main() {
 	driver := r.Group("/driver")
 	{
 		driver.POST("/login", handlers.DriverLogin)
+		driver.GET("/drivers/:id", handlers.GetDriver)
+		driver.GET("/drivers/:id/reservations", handlers.ListDriverReservations)
 		driver.PATCH("/drivers/:id/status", handlers.UpdateDriverStatus)
 		driver.GET("/drivers/:id/history", handlers.ListDriverHistory)
 		driver.GET("/available-requests", handlers.GetAvailableRideRequests)
+		driver.GET("/reserved-requests", handlers.GetReservedRideRequests)
 		driver.POST("/ride-requests/:id/accept", handlers.AcceptRideRequest)
 		driver.PATCH("/ride-requests/:id/status", handlers.UpdateRideStatus)
 		driver.PATCH("/drivers/:id/location", handlers.UpdateDriverLocation)
+		driver.PATCH("/fcm-token", handlers.UpdateDriverFCMToken)
+		driver.DELETE("/drivers/:id", handlers.DeleteDriverAccount)
 	}
 
 	// Customer Routes
@@ -63,8 +87,17 @@ func main() {
 		customer.POST("/request-otp", handlers.RequestOTP)
 		customer.POST("/verify-otp", handlers.VerifyOTP)
 		customer.POST("/login", handlers.CustomerLogin) // Deprecated
+		customer.GET("/ride-requests", handlers.ListAllRideRequests)
+		customer.GET("/ride-requests/:id", handlers.GetRideRequest)
+		customer.GET("/ride-requests/reserved", handlers.ListCustomerReservations)
 		customer.POST("/ride-requests", handlers.CreateRideRequest)
 		customer.POST("/ride-requests/:id/rate", handlers.SubmitRating)
+		customer.PATCH("/profile", handlers.UpdateCustomerProfile)
+		customer.GET("/:id/addresses", handlers.ListSavedAddresses)
+		customer.POST("/addresses", handlers.AddSavedAddress)
+		customer.DELETE("/addresses/:id", handlers.DeleteSavedAddress)
+		customer.PATCH("/fcm-token", handlers.UpdateCustomerFCMToken)
+		customer.DELETE("/:id", handlers.DeleteCustomerAccount)
 	}
 
 	// Message & Emergency Routes (Shared)

@@ -4,6 +4,7 @@ import (
 	"daiko-kun-backend/db"
 	"daiko-kun-backend/models"
 	"net/http"
+	"strings"
 	"time"
 
 	"fmt"
@@ -140,35 +141,52 @@ func CreateEmergencyReport(c *gin.Context) {
 
 // UploadMessageImage handles POST /ride-requests/:id/upload
 func UploadMessageImage(c *gin.Context) {
+	// ファイルサイズ制限 (最大10MB)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 10<<20)
+
 	file, header, err := c.Request.FormFile("image")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No image uploaded"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No image uploaded or file too large: " + err.Error()})
 		return
 	}
 	defer file.Close()
 
+	// 拡張子の簡易バリデーション
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	allowedExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
+	if !allowedExts[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file type. Only jpg, png, gif allowed."})
+		return
+	}
+
 	// Ensure uploads directory exists
-	if _, err := os.Stat("uploads"); os.IsNotExist(err) {
-		os.Mkdir("uploads", 0755)
+	uploadDir := "uploads"
+	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create upload directory: " + err.Error()})
+			return
+		}
 	}
 
 	// Create unique filename
-	filename := fmt.Sprintf("%s%s", uuid.New().String(), filepath.Ext(header.Filename))
-	dst := filepath.Join("uploads", filename)
+	filename := fmt.Sprintf("%s%s", uuid.New().String(), ext)
+	dst := filepath.Join(uploadDir, filename)
 
 	out, err := os.Create(dst)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create file: " + err.Error()})
 		return
 	}
 	defer out.Close()
 
 	_, err = io.Copy(out, file)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save image"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file content: " + err.Error()})
 		return
 	}
 
+	// URL構築 (本来はドメインを変数化すべきだが、一旦相対パスまたは固定ホストで返す)
+	// フロントエンドは http://localhost:8080 をつけてアクセスする想定
 	url := fmt.Sprintf("/uploads/%s", filename)
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
