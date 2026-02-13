@@ -50,6 +50,7 @@ func main() {
 			platform.PATCH("/companies/:id/status", handlers.UpdateCompanyStatus)
 			platform.GET("/settlements", handlers.GetSettlements)
 			platform.GET("/settlements/export", handlers.ExportSettlementsCSV)
+			platform.GET("/reports", handlers.ListReports)
 		}
 
 		// Company Management (Individual Companies)
@@ -104,6 +105,7 @@ func main() {
 	r.GET("/ride-requests/:id/messages", handlers.ListMessages)
 	r.POST("/ride-requests/:id/messages", handlers.SendMessage)
 	r.POST("/ride-requests/:id/emergency", handlers.CreateEmergencyReport)
+	r.POST("/ride-requests/:id/report", handlers.SubmitUserReport)
 	r.POST("/ride-requests/:id/upload", handlers.UploadMessageImage)
 
 	// Static files for image uploads
