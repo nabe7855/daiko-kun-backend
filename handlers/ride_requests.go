@@ -3,6 +3,7 @@ package handlers
 import (
 	"daiko-kun-backend/db"
 	"daiko-kun-backend/models"
+	"daiko-kun-backend/services"
 	"fmt"
 	"net/http"
 	"time"
@@ -48,7 +49,21 @@ func CreateRideRequest(c *gin.Context) {
 
 // ListAllRideRequests handles GET /admin/ride-requests
 func ListAllRideRequests(c *gin.Context) {
-	companyID := c.Query("company_id")
+	if db.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection not initialized"})
+		return
+	}
+
+	// Security: Prefer company_id from context (JWT) over query param
+	var companyID string
+	companyIDInToken, exists := c.Get("company_id")
+	if exists && companyIDInToken != nil {
+		// Enforce tenant isolation
+		companyID = companyIDInToken.(string)
+	} else {
+		// Fallback for Super Admin
+		companyID = c.Query("company_id")
+	}
 
 	query := `
 		SELECT 
@@ -116,9 +131,11 @@ func GetRideRequest(c *gin.Context) {
 			r.actual_fare, r.payment_method, r.rating_to_driver, r.rating_to_customer, r.review_comment,
 			d.name, d.phone_number, d.license_number,
 			d.current_lat, d.current_lng,
-			d.average_rating, d.rating_count
+			d.average_rating, d.rating_count,
+			c.name
 		FROM ride_requests r
 		LEFT JOIN drivers d ON r.driver_id = d.id
+		LEFT JOIN customers c ON r.customer_id::text = c.id::text OR r.customer_id = c.name
 		WHERE r.id = $1
 	`
 
@@ -132,6 +149,7 @@ func GetRideRequest(c *gin.Context) {
 		&r.DriverName, &r.DriverPhone, &r.LicenseNumber,
 		&r.DriverCurrentLat, &r.DriverCurrentLng,
 		&r.DriverAverageRating, &r.DriverRatingCount,
+		&r.CustomerName,
 	)
 
 	if err != nil {
@@ -145,7 +163,19 @@ func GetRideRequest(c *gin.Context) {
 // GetAvailableRideRequests handles GET /driver/available-requests
 func GetAvailableRideRequests(c *gin.Context) {
 	// Statusがpendingかつ予約ではない（scheduled_atがNULL）の依頼を取得
-	rows, err := db.DB.Query("SELECT id, customer_id, pickup_lat, pickup_lng, destination_lat, destination_lng, pickup_address, destination_address, estimated_fare, status, created_at, updated_at FROM ride_requests WHERE status = 'pending' AND (scheduled_at IS NULL OR scheduled_at <= NOW() + INTERVAL '1 hour') ORDER BY created_at DESC")
+	query := `
+		SELECT 
+			r.id, r.customer_id, r.pickup_lat, r.pickup_lng, 
+			r.destination_lat, r.destination_lng, r.pickup_address, 
+			r.destination_address, r.estimated_fare, r.status, 
+			r.created_at, r.updated_at, c.name
+		FROM ride_requests r
+		LEFT JOIN customers c ON r.customer_id::text = c.id::text OR r.customer_id = c.name
+		WHERE r.status = 'pending' 
+		AND (r.scheduled_at IS NULL OR r.scheduled_at <= NOW() + INTERVAL '1 hour') 
+		ORDER BY r.created_at DESC
+	`
+	rows, err := db.DB.Query(query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -155,7 +185,12 @@ func GetAvailableRideRequests(c *gin.Context) {
 	var requests []models.RideRequest
 	for rows.Next() {
 		var r models.RideRequest
-		err := rows.Scan(&r.ID, &r.CustomerID, &r.PickupLat, &r.PickupLng, &r.DestinationLat, &r.DestinationLng, &r.PickupAddress, &r.DestinationAddress, &r.EstimatedFare, &r.Status, &r.CreatedAt, &r.UpdatedAt)
+		err := rows.Scan(
+			&r.ID, &r.CustomerID, &r.PickupLat, &r.PickupLng, 
+			&r.DestinationLat, &r.DestinationLng, &r.PickupAddress, 
+			&r.DestinationAddress, &r.EstimatedFare, &r.Status, 
+			&r.CreatedAt, &r.UpdatedAt, &r.CustomerName,
+		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -244,6 +279,25 @@ func AcceptRideRequest(c *gin.Context) {
 	}
 
 	tx.Commit()
+
+	// ---- Background: Send Notification to Customer ----
+	go func() {
+		var customerToken string
+		var driverName string
+		// Get customer FCM token and driver name
+		err := db.DB.QueryRow(`
+			SELECT c.fcm_token, d.name 
+			FROM ride_requests r
+			JOIN customers c ON r.customer_id::text = c.id::text OR r.customer_id = c.name
+			JOIN drivers d ON r.driver_id = d.id
+			WHERE r.id = $1
+		`, id).Scan(&customerToken, &driverName)
+
+		if err == nil && customerToken != "" {
+			services.NotifyCustomerWhenDriverAccepted(customerToken, driverName)
+		}
+	}()
+
 	c.JSON(http.StatusOK, gin.H{"message": "Ride request accepted successfully"})
 }
 
@@ -299,6 +353,23 @@ func UpdateRideStatus(c *gin.Context) {
 		return
 	}
 
+	// ---- Background: Send Notification if Driver Arrived ----
+	if body.Status == "arrived" {
+		go func() {
+			var customerToken string
+			err := db.DB.QueryRow(`
+				SELECT c.fcm_token 
+				FROM ride_requests r
+				JOIN customers c ON r.customer_id::text = c.id::text OR r.customer_id = c.name
+				WHERE r.id = $1
+			`, id).Scan(&customerToken)
+
+			if err == nil && customerToken != "" {
+				services.NotifyCustomerWhenDriverArrived(customerToken)
+			}
+		}()
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Status updated successfully", "status": body.Status})
 }
 
@@ -349,7 +420,7 @@ func SubmitRating(c *gin.Context) {
 	var avgRating float64
 	var count int
 	err = tx.QueryRow(`
-		SELECT COALESCE(AVG(rating_to_driver), 0), COUNT(rating_to_driver)
+		SELECT COALESCE(AVG(rating_to_driver::float), 0), COUNT(rating_to_driver)
 		FROM ride_requests
 		WHERE driver_id = $1 AND rating_to_driver IS NOT NULL
 	`, *driverID).Scan(&avgRating, &count)
@@ -375,6 +446,72 @@ func SubmitRating(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Rating submitted successfully"})
 }
+
+// SubmitCustomerRating handles POST /driver/ride-requests/:id/rate-customer
+func SubmitCustomerRating(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Rating int `json:"rating" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tx, err := db.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+
+	// 1. Get customer_id
+	var customerID string
+	err = tx.QueryRow("SELECT customer_id FROM ride_requests WHERE id = $1", id).Scan(&customerID)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "Ride request not found"})
+		return
+	}
+
+	// 2. Update ride_request rating
+	_, err = tx.Exec("UPDATE ride_requests SET rating_to_customer = $1, updated_at = $2 WHERE id = $3",
+		body.Rating, time.Now(), id)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rating"})
+		return
+	}
+
+	// 3. Recalculate customer average rating and count
+	var avgRating float64
+	var count int
+	err = tx.QueryRow(`
+		SELECT COALESCE(AVG(rating_to_customer::float), 0), COUNT(rating_to_customer)
+		FROM ride_requests
+		WHERE customer_id = $1 AND rating_to_customer IS NOT NULL
+	`, customerID).Scan(&avgRating, &count)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to recalculate customer rating"})
+		return
+	}
+
+	// 4. Update customers table
+	_, err = tx.Exec("UPDATE customers SET average_rating = $1, rating_count = $2, updated_at = $3 WHERE id = $4",
+		avgRating, count, time.Now(), customerID)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update customer statistics"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Customer rating submitted successfully"})
+}
 // ListDriverHistory handles GET /drivers/:id/history
 func ListDriverHistory(c *gin.Context) {
 	driverID := c.Param("id")
@@ -385,8 +522,10 @@ func ListDriverHistory(c *gin.Context) {
 			r.destination_lat, r.destination_lng, r.pickup_address, 
 			r.destination_address, r.estimated_fare, r.status, 
 			r.created_at, r.updated_at,
-			r.actual_fare, r.payment_method, r.rating_to_driver, r.rating_to_customer, r.review_comment
+			r.actual_fare, r.payment_method, r.rating_to_driver, r.rating_to_customer, r.review_comment,
+			c.name
 		FROM ride_requests r
+		LEFT JOIN customers c ON r.customer_id::text = c.id::text OR r.customer_id = c.name
 		WHERE r.driver_id = $1 AND r.status = 'completed'
 		ORDER BY r.created_at DESC
 	`
@@ -406,6 +545,7 @@ func ListDriverHistory(c *gin.Context) {
 			&r.DestinationAddress, &r.EstimatedFare, &r.Status, 
 			&r.CreatedAt, &r.UpdatedAt,
 			&r.ActualFare, &r.PaymentMethod, &r.RatingToDriver, &r.RatingToCustomer, &r.ReviewComment,
+			&r.CustomerName,
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan row: " + err.Error()})

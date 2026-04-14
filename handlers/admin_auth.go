@@ -4,8 +4,11 @@ import (
 	"daiko-kun-backend/db"
 	"daiko-kun-backend/models"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type LoginRequest struct {
@@ -39,10 +42,28 @@ func AdminLogin(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, LoginResponse{
-		ID:        user.ID,
-		CompanyID: user.CompanyID,
-		Role:      user.Role,
-		Name:      user.Name,
+	// Generate JWT Token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":    user.ID,
+		"username":   user.Username,
+		"role":       user.Role,
+		"company_id": user.CompanyID,
+		"exp":        time.Now().Add(time.Hour * 24).Unix(),
+	})
+
+	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"token": tokenString,
+		"user": LoginResponse{
+			ID:        user.ID,
+			CompanyID: user.CompanyID,
+			Role:      user.Role,
+			Name:      user.Name,
+		},
 	})
 }

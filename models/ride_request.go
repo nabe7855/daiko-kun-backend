@@ -31,4 +31,5 @@ type RideRequest struct {
 	DriverCurrentLng *float64 `json:"driver_current_lng,omitempty"`
 	DriverAverageRating *float64 `json:"driver_average_rating,omitempty"`
 	DriverRatingCount   *int     `json:"driver_rating_count,omitempty"`
+	CustomerName        *string  `json:"customer_name,omitempty"`
 }

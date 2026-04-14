@@ -1,0 +1,1 @@
+ALTER TABLE user_reports ADD COLUMN is_blocking BOOLEAN DEFAULT FALSE;

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: daiko-kun-backend
+    runtime: docker
+    plan: free # コストを抑えるための無料プラン。必要に応じて後でアップグレード可能
+    envVars:
+      - key: GIN_MODE
+        value: release
+      - key: DATABASE_URL
+        sync: false # Renderの管理画面から直接入力する形式
+      - key: PORT
+        value: 8080
+    buildFilter:
+      paths:
+        - ./**
+    autoDeploy: true
+
+# 注意: RenderのFreeプランでは、ディスク（画像保存用）が共有されないため、
+# もし画像の永続化が必要な場合は、RenderのDisk (有料) を追加するか、
+# Supabase Storage などの外部ストレージを使う設定に後ほど拡張します。

@@ -34,6 +34,20 @@ func CreateDriver(c *gin.Context) {
 		driver.Status = "inactive"
 	}
 
+	// Security: Get company_id from token if available
+	companyIDInToken, exists := c.Get("company_id")
+	if exists && companyIDInToken != nil {
+		// Enforce tenant isolation: Override any company_id in body with the one from the token
+		cid := companyIDInToken.(string)
+		driver.CompanyID = &cid
+	}
+
+	// If super admin (no company_id in token), trust the body's CompanyID or require it
+	if driver.CompanyID == nil || *driver.CompanyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Company ID is required"})
+		return 
+	}
+
 	if db.DB == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection not initialized"})
 		return
@@ -71,7 +85,16 @@ func ListDrivers(c *gin.Context) {
 		return
 	}
 
-	companyID := c.Query("company_id")
+	// Security: Prefer company_id from context (JWT) over query param
+	var companyID string
+	companyIDInToken, exists := c.Get("company_id")
+	if exists && companyIDInToken != nil {
+		// Enforce tenant isolation
+		companyID = companyIDInToken.(string)
+	} else {
+		// Fallback for Super Admin or simple testing (if allowed)
+		companyID = c.Query("company_id")
+	}
 
 	query := "SELECT id, name, phone_number, license_number, company_id, status, average_rating, rating_count, created_at, updated_at FROM drivers"
 	args := []interface{}{}

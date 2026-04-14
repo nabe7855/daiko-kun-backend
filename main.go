@@ -3,6 +3,7 @@ package main
 import (
 	"daiko-kun-backend/db"
 	"daiko-kun-backend/handlers"
+	"daiko-kun-backend/middleware"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -38,11 +39,14 @@ func main() {
 
 	// Admin Routes
 	admin := r.Group("/admin")
-	{
-		admin.POST("/login", handlers.AdminLogin)
+	admin.POST("/login", handlers.AdminLogin)
 
+	// Protected routes
+	adminProtected := admin.Group("/")
+	adminProtected.Use(middleware.AuthMiddleware())
+	{
 		// Platform Management (Super Admin)
-		platform := admin.Group("/platform")
+		platform := adminProtected.Group("/platform")
 		{
 			platform.GET("/stats", handlers.GetPlatformStats)
 			platform.GET("/companies", handlers.ListCompanies)
@@ -54,15 +58,15 @@ func main() {
 		}
 
 		// Company Management (Individual Companies)
-		company := admin.Group("/company")
+		company := adminProtected.Group("/company")
 		{
 			company.GET("/stats", handlers.GetCompanyStats)
 		}
 
-		admin.POST("/drivers", handlers.CreateDriver)
-		admin.GET("/drivers", handlers.ListDrivers)
-		admin.GET("/ride-requests", handlers.ListAllRideRequests)
-		admin.GET("/drivers/:id/history", handlers.ListDriverHistory)
+		adminProtected.POST("/drivers", handlers.CreateDriver)
+		adminProtected.GET("/drivers", handlers.ListDrivers)
+		adminProtected.GET("/ride-requests", handlers.ListAllRideRequests)
+		adminProtected.GET("/drivers/:id/history", handlers.ListDriverHistory)
 	}
 
 	// Driver Routes
@@ -77,6 +81,7 @@ func main() {
 		driver.GET("/reserved-requests", handlers.GetReservedRideRequests)
 		driver.POST("/ride-requests/:id/accept", handlers.AcceptRideRequest)
 		driver.PATCH("/ride-requests/:id/status", handlers.UpdateRideStatus)
+		driver.POST("/ride-requests/:id/rate-customer", handlers.SubmitCustomerRating)
 		driver.PATCH("/drivers/:id/location", handlers.UpdateDriverLocation)
 		driver.PATCH("/fcm-token", handlers.UpdateDriverFCMToken)
 		driver.DELETE("/drivers/:id", handlers.DeleteDriverAccount)
@@ -92,6 +97,7 @@ func main() {
 		customer.GET("/ride-requests/:id", handlers.GetRideRequest)
 		customer.GET("/ride-requests/reserved", handlers.ListCustomerReservations)
 		customer.POST("/ride-requests", handlers.CreateRideRequest)
+		customer.PATCH("/ride-requests/:id/status", handlers.UpdateRideStatus)
 		customer.POST("/ride-requests/:id/rate", handlers.SubmitRating)
 		customer.PATCH("/profile", handlers.UpdateCustomerProfile)
 		customer.GET("/:id/addresses", handlers.ListSavedAddresses)

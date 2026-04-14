@@ -13,7 +13,7 @@ import (
 
 // ListCompanies handles GET /admin/platform/companies
 func ListCompanies(c *gin.Context) {
-	rows, err := db.DB.Query("SELECT id, name, address, phone_number, email, status, commission_rate, created_at, updated_at FROM companies ORDER BY created_at DESC")
+	rows, err := db.DB.Query("SELECT id, name, COALESCE(address, ''), COALESCE(phone_number, ''), COALESCE(email, ''), status, commission_rate, created_at, updated_at FROM companies ORDER BY created_at DESC")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -39,26 +39,54 @@ func ListCompanies(c *gin.Context) {
 
 // CreateCompany handles POST /admin/platform/companies
 func CreateCompany(c *gin.Context) {
-	var req models.Company
+	var req struct {
+		models.Company
+		AdminUsername string `json:"admin_username"`
+		AdminPassword string `json:"admin_password"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	req.ID = uuid.New().String()
-	req.Status = "pending" // Initially pending for review
-	req.CreatedAt = time.Now()
-	req.UpdatedAt = time.Now()
-
-	sql := `INSERT INTO companies (id, name, address, phone_number, email, status, commission_rate, created_at, updated_at) 
-	        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err := db.DB.Exec(sql, req.ID, req.Name, req.Address, req.PhoneNumber, req.Email, req.Status, req.CommissionRate, req.CreatedAt, req.UpdatedAt)
+	tx, err := db.DB.Begin()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, req)
+	companyID := uuid.New().String()
+	now := time.Now()
+
+	// 1. Create Company
+	sqlComp := `INSERT INTO companies (id, name, address, phone_number, email, status, commission_rate, created_at, updated_at) 
+	            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	_, err = tx.Exec(sqlComp, companyID, req.Name, req.Address, req.PhoneNumber, req.Email, "active", req.CommissionRate, now, now)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create company: " + err.Error()})
+		return
+	}
+
+	// 2. Create Admin User for this company
+	if req.AdminUsername != "" && req.AdminPassword != "" {
+		adminID := uuid.New().String()
+		sqlAdmin := `INSERT INTO admin_users (id, company_id, username, password_hash, role, name, created_at, updated_at)
+		             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		_, err = tx.Exec(sqlAdmin, adminID, companyID, req.AdminUsername, req.AdminPassword, "company_admin", req.Name+" 管理者", now, now)
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create admin user: " + err.Error()})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"id": companyID, "message": "Company and admin user created successfully"})
 }
 
 // UpdateCompanyStatus handles PATCH /admin/platform/companies/:id/status
@@ -176,12 +204,46 @@ func ExportSettlementsCSV(c *gin.Context) {
 	year := c.Query("year")
 	month := c.Query("month")
 
-	// Get data (re-using logic or calling GetSettlementData)
-	// For brevity, we'll just mock CSV response here but normally it would query DB
-	// header
-	csvData := "Company Name,Completed Rides,Total Sales,Platform Fee,Net Profit\n"
-	csvData += "Sample Company A,120,600000,60000,540000\n"
-	csvData += "Sample Company B,85,425000,42500,382500\n"
+	whereClause := "r.status = 'completed'"
+	var args []interface{}
+
+	if year != "" && month != "" {
+		whereClause += " AND date_part('year', r.updated_at) = $1 AND date_part('month', r.updated_at) = $2"
+		args = append(args, year, month)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			c.name,
+			COUNT(r.id) as completed_rides,
+			COALESCE(SUM(r.actual_fare), 0) as total_sales,
+			COALESCE(SUM(r.actual_fare * c.commission_rate / 100.0), 0) as platform_fee
+		FROM companies c
+		LEFT JOIN drivers d ON c.id = d.company_id
+		LEFT JOIN ride_requests r ON d.id = r.driver_id AND %s
+		GROUP BY c.id, c.name
+		ORDER BY total_sales DESC
+	`, whereClause)
+
+	rows, err := db.DB.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	csvData := "会社名,完了配車数,総売上,プラットフォーム手数料,純利益\n"
+	for rows.Next() {
+		var name string
+		var count int
+		var sales, fee float64
+		err := rows.Scan(&name, &count, &sales, &fee)
+		if err != nil {
+			continue
+		}
+		profit := sales - fee
+		csvData += fmt.Sprintf("%s,%d,%.0f,%.0f,%.0f\n", name, count, sales, fee, profit)
+	}
 
 	filename := fmt.Sprintf("settlement_%s_%s.csv", year, month)
 	if year == "" || month == "" {
@@ -195,7 +257,22 @@ func ExportSettlementsCSV(c *gin.Context) {
 
 // GetCompanyStats handles GET /admin/company/stats
 func GetCompanyStats(c *gin.Context) {
-	companyID := c.Query("company_id")
+	if db.DB == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection not initialized"})
+		return
+	}
+
+	// Security: Prefer company_id from context (JWT) over query param
+	var companyID string
+	companyIDInToken, exists := c.Get("company_id")
+	if exists && companyIDInToken != nil {
+		// Enforce tenant isolation
+		companyID = companyIDInToken.(string)
+	} else {
+		// Fallback for Super Admin
+		companyID = c.Query("company_id")
+	}
+
 	if companyID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "company_id is required"})
 		return

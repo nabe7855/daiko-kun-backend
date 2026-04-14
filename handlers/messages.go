@@ -21,7 +21,7 @@ func ListMessages(c *gin.Context) {
 	rideID := c.Param("id")
 
 	rows, err := db.DB.Query(`
-		SELECT id, ride_id, sender_id, sender_type, content, image_url, created_at 
+		SELECT id, ride_id, sender_id, sender_type, content, COALESCE(image_url, ''), created_at 
 		FROM messages 
 		WHERE ride_id = $1 
 		ORDER BY created_at ASC
@@ -78,6 +78,7 @@ func SendMessage(c *gin.Context) {
 	`, m.ID, m.RideID, m.SenderID, m.SenderType, m.Content, m.ImageURL, m.CreatedAt)
 
 	if err != nil {
+		fmt.Printf("Error sending message: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send message: " + err.Error()})
 		return
 	}

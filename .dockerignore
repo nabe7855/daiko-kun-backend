@@ -1,0 +1,28 @@
+# Binary files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+test_build.exe
+test.exe
+
+# Dependency directories
+vendor/
+
+# Environment files
+.env
+
+# Logs
+*.log
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*
