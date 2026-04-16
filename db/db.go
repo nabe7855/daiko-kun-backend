@@ -50,8 +50,13 @@ func createTables() {
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			name TEXT NOT NULL,
 			contact_phone TEXT,
+			phone_number TEXT,
+			email TEXT,
+			address TEXT,
+			commission_rate FLOAT DEFAULT 0,
 			status TEXT DEFAULT 'active',
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
