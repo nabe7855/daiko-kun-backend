@@ -4,6 +4,7 @@ import (
 	"daiko-kun-backend/db"
 	"daiko-kun-backend/models"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -13,8 +14,11 @@ import (
 
 // ListCompanies handles GET /admin/platform/companies
 func ListCompanies(c *gin.Context) {
-	rows, err := db.DB.Query("SELECT id, name, COALESCE(address, ''), COALESCE(phone_number, ''), COALESCE(email, ''), status, commission_rate, created_at, updated_at FROM companies ORDER BY created_at DESC")
+	log.Println("Handling GET /admin/platform/companies")
+	query := "SELECT id, name, COALESCE(address, ''), COALESCE(phone_number, ''), COALESCE(email, ''), COALESCE(status, 'active'), COALESCE(commission_rate, 0), created_at, updated_at FROM companies ORDER BY created_at DESC"
+	rows, err := db.DB.Query(query)
 	if err != nil {
+		log.Printf("Error querying companies: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -25,6 +29,7 @@ func ListCompanies(c *gin.Context) {
 		var comp models.Company
 		err := rows.Scan(&comp.ID, &comp.Name, &comp.Address, &comp.PhoneNumber, &comp.Email, &comp.Status, &comp.CommissionRate, &comp.CreatedAt, &comp.UpdatedAt)
 		if err != nil {
+			log.Printf("Error scanning company row %s: %v\n", comp.ID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
