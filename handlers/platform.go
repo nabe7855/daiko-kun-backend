@@ -94,6 +94,31 @@ func CreateCompany(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": companyID, "message": "Company and admin user created successfully"})
 }
 
+// UpdateCompany handles PUT /admin/platform/companies/:id
+func UpdateCompany(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		Name           string  `json:"name"`
+		Address        string  `json:"address"`
+		PhoneNumber    string  `json:"phone_number"`
+		Email          string  `json:"email"`
+		CommissionRate float64 `json:"commission_rate"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	query := `UPDATE companies SET name = $1, address = $2, phone_number = $3, email = $4, commission_rate = $5, updated_at = $6 WHERE id = $7`
+	_, err := db.DB.Exec(query, req.Name, req.Address, req.PhoneNumber, req.Email, req.CommissionRate, time.Now(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Company updated successfully"})
+}
+
 // UpdateCompanyStatus handles PATCH /admin/platform/companies/:id/status
 func UpdateCompanyStatus(c *gin.Context) {
 	id := c.Param("id")

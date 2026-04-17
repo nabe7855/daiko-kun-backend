@@ -51,6 +51,7 @@ func main() {
 			platform.GET("/stats", handlers.GetPlatformStats)
 			platform.GET("/companies", handlers.ListCompanies)
 			platform.POST("/companies", handlers.CreateCompany)
+			platform.PUT("/companies/:id", handlers.UpdateCompany)
 			platform.PATCH("/companies/:id/status", handlers.UpdateCompanyStatus)
 			platform.GET("/settlements", handlers.GetSettlements)
 			platform.GET("/settlements/export", handlers.ExportSettlementsCSV)
